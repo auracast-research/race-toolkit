@@ -30,7 +30,7 @@ This project supports two installation methods. You can choose either based on y
 * `pip` with `requirements.txt`
 * `uv` using `pyproject.toml`
 
-Both methods install the same dependencies. Due to the requirements of the [Bumble Bluetooth library](github.com/google/bumble), Python 3.10 is required.
+Both methods install the same dependencies. Due to the requirements of the [Bumble Bluetooth library](https://github.com/google/bumble), Python 3.10 is required.
 
 ### Option 1: Install with `pip`
 
