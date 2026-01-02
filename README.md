@@ -59,6 +59,10 @@ To run commands inside the environment:
 uv run python race_toolkit.py --help
 ```
 
+To use the `gatt` or `rfcomm` transports, Bumble requires access to either your built-in Bluetooth controller or an external Bluetooth dongle. On some Linux distributions the Bluetooth daemon needs to be disabled. If you see any HCI-related or libUSB-related issues, try deactivating the service (`systemctl stop bluetooth`). On macOS, an external dongle is required, as the operating system does not expose the HCI layer.
+
+Usually, the best approach is using an external Bluetooth dongle. This allows you to use the toolkit without interfering with your OS Bluetooth stack. Note that not all Bluetooth dongles are supported by Bumble.
+
 ## Requirements
 
 - Python 3.10+
