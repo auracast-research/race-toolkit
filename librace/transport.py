@@ -667,7 +667,7 @@ class RFCOMMTransport(BumbleTransport):
 
             # Find RACE channel based on its UUID
             channel = await find_rfcomm_channel_with_uuid(
-                self.connection, str(self.uuid)
+                self.connection, self.uuid
             )
             if channel is None:
                 logging.error("Channel not found.")
