@@ -830,6 +830,7 @@ async def main():
         await command_check(args)
     else:
         # Initialize the transport class based on the given technology and target UUIDs
+        transport = None
         try:
             transport = init_transport(args)
         except ValueError as e:
@@ -867,8 +868,68 @@ async def main():
                 await command_fota(
                     r, args.fota_file, args.dont_reflash, args.chunks_per_write
                 )
+        except ConnectionError as e:
+            logging.error(color(f"Connection failed: {e}", "red"))
+            # Offer to try alternative transport if using GATT
+            if args.transport.lower() == "gatt" and args.target_address:
+                logging.info(
+                    color(
+                        "Tip: Your device may use Bluetooth Classic. "
+                        "Try: --transport rfcomm --target-address %s",
+                        "yellow"
+                    ),
+                    args.target_address
+                )
+            elif args.transport.lower() == "gatt" and not args.target_address:
+                await _offer_transport_fallback(args, r)
         finally:
             if r is not None:
+                await r.close()
+
+
+async def _offer_transport_fallback(
+    args: argparse.Namespace, current_race: RACE | None
+):
+    """Offer to try RFCOMM transport when GATT fails."""
+    logging.info(
+        color(
+            "\nWould you like to try Bluetooth Classic (RFCOMM) instead? [y/N]: ",
+            "cyan"
+        )
+    )
+    response = input().strip().lower()
+    if response in ("y", "yes"):
+        logging.info(
+            "Please enter the Bluetooth Classic address (e.g., AA:BB:CC:DD:EE:FF):")
+        bt_addr = input().strip()
+        if bt_addr:
+            # Close the current connection if any
+            if current_race is not None:
+                await current_race.close()
+
+            # Try RFCOMM
+            logging.info("Attempting RFCOMM connection to %s...", bt_addr)
+            release_bluetooth_controller(args.controller)
+            rfcomm_transport = RFCOMMTransport(
+                args.controller, bt_addr, args.authenticate
+            )
+            r = RACE(rfcomm_transport, args.send_delay)
+            try:
+                # Re-run the command with new transport
+                if args.command == "mediainfo":
+                    await command_mediainfo(r)
+                elif args.command == "buildversion":
+                    await command_buildversion(r, args.outfile)
+                elif args.command == "sdkinfo":
+                    await command_sdkinfo(r, args.outfile)
+                elif args.command == "bdaddr":
+                    await command_bdaddr(r, args.outfile)
+                else:
+                    logging.info(
+                        "Please re-run the command with --transport rfcomm --target-address %s",
+                        bt_addr
+                    )
+            finally:
                 await r.close()
 
 

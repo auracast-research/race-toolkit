@@ -16,7 +16,7 @@ from bumble.core import (
     BT_LE_TRANSPORT,
     UUID,
     AdvertisingData,
-    ConnectionError,
+    ConnectionError as BumbleConnectionError,
 )
 from bumble.hci import (
     Address,
@@ -84,7 +84,8 @@ class GATTBleakTransport(Transport):
         self.client = BleakClient(self.address)
         await self.client.connect()
 
-        logging.info(f"Connected to {self.address.name} ({self.address.address})")
+        logging.info(
+            f"Connected to {self.address.name} ({self.address.address})")
 
         service_uuids = [
             UUID(self.client.services.services[s].uuid)
@@ -192,13 +193,16 @@ class BumbleTransport(Transport):
         config.keystore = "JsonKeyStore"
         config.address = Address.generate_static_address()
         config.name = "BumbleRace"
-        self.device = Device.from_config_with_hci(config, self.t.source, self.t.sink)
+        self.device = Device.from_config_with_hci(
+            config, self.t.source, self.t.sink)
         if classic:
             self.device.classic_enabled = True
         if le:
             self.device.le_enabled = True
         await self.device.power_on()
-        logging.info("Device initialized.")
+        logging.info(
+            "Bluetooth controller initialized (%s).", self.ctrl_dev
+        )
 
     async def change_bd_addr(self, new_addr: Address):
         """Change the BD address of the controller. Works only on Broadcom/Cypress controlelrs."""
@@ -300,7 +304,8 @@ class GATTBumbleChecker(BumbleTransport):
                 chosen = int(chosen)
                 return devices[chosen]
         else:
-            logging.warning("No BLE devices found. Try to get closer to your device?")
+            logging.warning(
+                "No BLE devices found. Try to get closer to your device?")
 
     async def check_UUIDs(self, address: str):
         self.address = address
@@ -396,8 +401,9 @@ class RFCOMMBumbleChecker(BumbleTransport):
         except asyncio.CancelledError as e:
             logging.warning(f"Error connecting to device via HfP ({e}).")
             return False
-        except ConnectionError as e:
+        except BumbleConnectionError as e:
             logging.warning(f"Error connecting to device via HfP ({e}).")
+            return False
             return False
         except Exception as e:
             logging.warning(
@@ -444,14 +450,26 @@ class GATTBumbleTransport(BumbleTransport):
             return
 
         if self.address is None:
-            (self.address, self.name) = await self._find_target_device()
-            if self.address is None:
-                sys.exit(1)
+            result = await self._find_target_device()
+            if result is None:
+                raise ConnectionError(
+                    "No BLE device found. If your device uses Bluetooth Classic, "
+                    "try using --transport rfcomm instead."
+                )
+            (self.address, self.name) = result
 
-        # Connect to the remote device
-        self.connection = await self.device.connect(
-            self.address, transport=BT_LE_TRANSPORT
-        )
+        # Connect to the remote device with timeout
+        try:
+            self.connection = await asyncio.wait_for(
+                self.device.connect(self.address, transport=BT_LE_TRANSPORT),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"Timeout connecting to {self.address} via BLE. "
+                "The device may not support BLE or may be out of range."
+            )
+
         if not self.connection:
             logging.error("Connection could not be established.")
             return
@@ -548,8 +566,16 @@ class GATTBumbleTransport(BumbleTransport):
                 return True
         return False
 
-    async def _find_target_device(self):
-        logging.info("Scanning for BLE devices...")
+    async def _find_target_device(self, timeout: float = 10.0):
+        """Scan for BLE devices with timeout.
+
+        Args:
+            timeout: Maximum time to scan in seconds (default 10s).
+
+        Returns:
+            Tuple of (address, name) or None if no device found.
+        """
+        logging.info("Scanning for BLE devices (timeout: %.0fs)...", timeout)
 
         device_dict = {}
 
@@ -569,10 +595,22 @@ class GATTBumbleTransport(BumbleTransport):
         self.device.on("advertisement", on_adv)
 
         await self.device.start_scanning(True, filter_duplicates=True)
-        while len(device_dict) == 0:
+
+        # Wait with timeout instead of infinite loop
+        elapsed = 0.0
+        while len(device_dict) == 0 and elapsed < timeout:
             await asyncio.sleep(self.scan_time)
+            elapsed += self.scan_time
+
         self.device.remove_listener("advertisement", on_adv)
         await self.device.stop_scanning()
+
+        if len(device_dict) == 0:
+            logging.warning(
+                "No BLE devices found after %.0fs. The device may use Bluetooth Classic instead.",
+                timeout
+            )
+            return None
 
         devices = list(device_dict.items())
         if len(devices) > 0:
@@ -620,7 +658,8 @@ class RFCOMMTransport(BumbleTransport):
                 vendor = "Common"
             if vendor != "":
                 logging.info(
-                    color(f"Found RACE UUID {uuid} for vendor {vendor}", "cyan")
+                    color(
+                        f"Found RACE UUID {uuid} for vendor {vendor}", "cyan")
                 )
                 return uuid
         return None
@@ -656,7 +695,8 @@ class RFCOMMTransport(BumbleTransport):
             if not self.uuid:
                 channels = await find_rfcomm_channels(self.connection)
                 for chn in channels:
-                    uuid = RFCOMMTransport._matches_any_known_uuid(channels[chn])
+                    uuid = RFCOMMTransport._matches_any_known_uuid(
+                        channels[chn])
                     if uuid:
                         self.uuid = uuid
 
@@ -752,7 +792,8 @@ class USBHIDTransport(Transport):
             return
 
         self._flush_hid_buffer()
-        outbuf = USBHIDTransport.USB_RACE_PREFIX + struct.pack("<H", len(data)) + data
+        outbuf = USBHIDTransport.USB_RACE_PREFIX + \
+            struct.pack("<H", len(data)) + data
         self.device.write(outbuf)
 
         if self.recv_fn:
@@ -763,7 +804,7 @@ class USBHIDTransport(Transport):
             # then receive until we get empty responses
             while length > 0:
                 if response[0] == 0x07:
-                    self.recv_fn(response[3 : 3 + length])
+                    self.recv_fn(response[3: 3 + length])
                 (response, length) = self._read_report()
 
     async def close(self):
