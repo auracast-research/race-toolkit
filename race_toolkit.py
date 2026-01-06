@@ -15,9 +15,14 @@ import time
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from hexdump import hexdump
+try:
+    from usb1 import USBErrorBusy
+except ImportError:
+    # usb1 may not be installed, create a dummy exception
+    class USBErrorBusy(Exception):  # type: ignore
+        """Dummy exception when usb1 is not available."""
 
-from bumble.colors import color
+from hexdump import hexdump
 
 from librace.constants import RaceType
 from librace.fota import FOTAUpdater
@@ -424,8 +429,7 @@ async def command_check(args: argparse.Namespace):
                         r.sync_payload).bd_addr
                     bdaddr = ":".join(f"{byte:02X}" for byte in bdaddr)
                     logging.info(
-                        color(
-                            f"Got Bluetooth Classic address {bdaddr}", "cyan")
+                        "Got Bluetooth Classic address %s", bdaddr
                     )
                 except asyncio.TimeoutError:
                     logging.warning(
@@ -439,10 +443,8 @@ async def command_check(args: argparse.Namespace):
             await le_checker.close()
     else:
         logging.info(
-            color(
-                "The device does not seem to be available via BLE. It is probably not vulnerable to CVE-2025-20700! You could try again to be sure.",
-                "cyan",
-            )
+            "The device does not seem to be available via BLE. "
+            "It is probably not vulnerable to CVE-2025-20700! You could try again to be sure."
         )
         _get_vuln(vulnerabilities,
                   "CVE-2025-20700").status = VulnerabilityStatus.NOT_APPLICABLE
@@ -457,6 +459,10 @@ async def command_check(args: argparse.Namespace):
     #   - enumerate RFCOMM services and look for known UUIDs
     #   - try to read flash via RFCOMM
     logging.info("Step 2: Checking Bluetooth Classic connection")
+
+    # Release the Bluetooth controller again before Step 2
+    release_bluetooth_controller(args.controller)
+
     if not bdaddr:
         logging.error(
             "Now I need a Bluetooth address. If you have it, please supply it now: "
@@ -813,7 +819,7 @@ async def command_fota(
     f = FOTAUpdater(r, chunks_per_write)
     if fota_file is None and dont_reflash is False:
         logging.error(
-            color("Error! FOTA File is required when --dont-reflash is not set!", "red")
+            "FOTA File is required when --dont-reflash is not set!"
         )
         return
     # Invert the dont_reflash flag so that it's clearer in the FOTA updater class
@@ -945,6 +951,14 @@ def run_main():
         logging.debug("Traceback:", exc_info=True)
         logging.error("Connection error: %s", e)
         sys.exit(1)
+    except USBErrorBusy:
+        logging.debug("Traceback:", exc_info=True)
+        logging.error(
+            "USB device is busy. The Bluetooth controller may still be in use. "
+            "Try unplugging and replugging the adapter, or run: "
+            "sudo systemctl stop bluetooth"
+        )
+        sys.exit(1)
     except KeyboardInterrupt:
         logging.info("Interrupted by user.")
         sys.exit(130)
@@ -954,6 +968,7 @@ def run_main():
         logging.error("Error: %s", e)
         if not debug_mode:
             logging.info("Run with --debug for full traceback.")
+        sys.exit(1)
         sys.exit(1)
 
 
