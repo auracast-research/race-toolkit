@@ -1115,6 +1115,7 @@ dependencies = [
     { name = "bumble" },
     { name = "hexdump" },
     { name = "hid" },
+    { name = "pyusb" },
     { name = "tqdm" },
 ]
 
@@ -1129,6 +1130,7 @@ requires-dist = [
     { name = "bumble", specifier = "==0.0.208" },
     { name = "hexdump", specifier = ">=3.3" },
     { name = "hid", specifier = "==1.0.7" },
+    { name = "pyusb", specifier = ">=1.3.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 

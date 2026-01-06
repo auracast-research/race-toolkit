@@ -22,8 +22,9 @@ class RACEDumper:
         self.stop_event = asyncio.Event()
         self.outbuf = b""
         self.progress = progress
+        self.had_errors = False
 
-    async def dump(self, addr: str = None, size: int = None, fd: io.IOBase = None):
+    async def dump(self, addr: int = None, size: int = None, fd: io.IOBase = None):
         await self.r.setup(self.recv)
 
         if addr is not None and size is not None:
@@ -37,7 +38,7 @@ class RACEDumper:
 
         if self.progress:
             with tqdm(
-                total=TOTAL_UNITS, desc=f"{self.verb} {self.desc}", unit=self.unit
+                total=TOTAL_UNITS, desc="%s %s" % (self.verb, self.desc), unit=self.unit
             ) as pbar:
                 address = self.start
                 while address < self.start + self.size:
@@ -50,13 +51,18 @@ class RACEDumper:
                     # Update progress bar by one UNIT
                     pbar.update(1)
                     address += self.unit_size
-            logging.info(f"{self.desc} dump completed successfully.")
+            if self.had_errors:
+                logging.warning(
+                    "%s dump completed with errors (some pages failed).", self.desc)
+            else:
+                logging.info("%s dump completed successfully.", self.desc)
         else:
             address = self.start
             while address < self.start + self.size:
                 race_packet = self.packet_prep(address)
-                logging.debug(f"Sending {hex(address)}/{hex(self.start + self.size)}")
-                logging.debug(f"\n{hexdump(race_packet.pack(), 'return')}")
+                logging.debug(
+                    "Sending %s/%s", hex(address), hex(self.start + self.size))
+                logging.debug("\n%s", hexdump(race_packet.pack(), 'return'))
                 await self.send(race_packet)
 
                 # Wait for response before proceeding to the next page
@@ -74,18 +80,21 @@ class RACEDumper:
     def recv(self, data: bytes):
         if not self.progress:
             logging.debug("Received response:")
-            logging.debug(f"\n{hexdump(data, 'return')}")
+            logging.debug("\n%s", hexdump(data, 'return'))
         unpacked = self._unpack(data)
-        if unpacked:
-            if type(unpacked) is bytes:
-                # Write to the open file handle
-                if self.fd:
-                    self.fd.write(unpacked)
-                    self.fd.flush()
-                self.outbuf += unpacked
+        # Only append data if we got valid bytes (not None from errors)
+        if unpacked is not None and isinstance(unpacked, bytes):
+            # Write to the open file handle
+            if self.fd:
+                self.fd.write(unpacked)
+                self.fd.flush()
+            self.outbuf += unpacked
+        elif unpacked is None:
+            # Track that we had an error (don't append garbage)
+            self.had_errors = True
 
-            # Signal main loop to proceed
-            self.stop_event.set()
+        # Signal main loop to proceed regardless
+        self.stop_event.set()
 
     async def await_response(self):
         await self.stop_event.wait()
@@ -111,15 +120,20 @@ class RACERAMDumper(RACEDumper):
             packet = ReadAddressResponse.unpack(data)
             if packet.return_code != 0:
                 logging.error(
-                    f"ERROR while reading at address {packet.page_address:#2x} from storage type {packet.storage_type}. Result: {packet.return_code}"
+                    "ERROR while reading at address %#x. Result: %d",
+                    packet.page_address, packet.return_code
                 )
+                # Return None to indicate read failure - don't return garbage
+                return None
             return packet.page_data
         else:
             packet = RacePacket.unpack(data)
             logging.error(
-                f"ERROR got an unexpected packet with ID {packet.header.id:#2x} and payload:"
+                "ERROR got an unexpected packet with ID %#x and payload:",
+                packet.header.id
             )
             hexdump(packet.payload)
+            return None
 
 
 class RACEFlashDumper(RACEDumper):
@@ -141,12 +155,17 @@ class RACEFlashDumper(RACEDumper):
             packet = ReadFlashPageResponse.unpack(data)
             if packet.return_code != 0:
                 logging.error(
-                    f"ERROR while reading at address {packet.page_address:#2x} from storage type {packet.storage_type}. Result: {packet.return_code}"
+                    "ERROR while reading at address %#x from storage type %d. Result: %d",
+                    packet.page_address, packet.storage_type, packet.return_code
                 )
+                # Return None to indicate read failure - don't return garbage
+                return None
             return packet.page_data
         else:  # We got some unexpected packet thats not a ReadFlashPageResponse
             packet = RacePacket.unpack(data)
             logging.error(
-                f"ERROR got an unexpected packet with ID {packet.header.id:#2x} and payload:"
+                "ERROR got an unexpected packet with ID %#x and payload:",
+                packet.header.id
             )
             hexdump(packet.payload)
+            return None
