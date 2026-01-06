@@ -24,11 +24,29 @@ class RACE:
             await asyncio.sleep(self.send_delay)
         await self.transport.send(race_packet.pack())
 
-    async def send_sync(self, race_packet: RacePacket):
+    async def send_sync(self, race_packet: RacePacket, timeout: float = 10.0):
+        """Send a packet and wait for a response with timeout.
+
+        Args:
+            race_packet: The RACE packet to send.
+            timeout: Maximum time to wait for response in seconds (default 10s).
+
+        Returns:
+            The response payload bytes.
+
+        Raises:
+            asyncio.TimeoutError: If no response is received within timeout.
+        """
         if self.send_delay > 0:
             await asyncio.sleep(self.send_delay)
         await self.transport.send(race_packet.pack())
-        await self.stop_event.wait()
+        try:
+            await asyncio.wait_for(self.stop_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise asyncio.TimeoutError(
+                f"No response received within {timeout}s. "
+                "The device may not support this command."
+            )
         self.stop_event.clear()
         r = self.sync_payload
         return r
@@ -68,7 +86,8 @@ class RACE:
 
         # Have we gotten all the continuation data?
         if len(self.full_payload) - 4 >= self.expected_length:
-            race_header = RaceHeader.unpack(self.full_payload[: RaceHeader.SIZE])
+            race_header = RaceHeader.unpack(
+                self.full_payload[: RaceHeader.SIZE])
 
             if self.recv_cb:
                 self.recv_cb(self.full_payload)

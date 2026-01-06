@@ -710,7 +710,11 @@ async def command_mediainfo(r: RACE):
     logging.info(
         "Trying to dump current playing media info. Identifying model and firmware version first..."
     )
-    bv = await _get_buildversion(r)
+    try:
+        bv = await _get_buildversion(r)
+    except asyncio.TimeoutError as e:
+        logging.error("Failed to get build version: %s", e)
+        return
     bv = bv[7:].replace(b"\x00", b"").decode("ascii")
     logging.info("Got buildversion `%s`.", bv)
 
