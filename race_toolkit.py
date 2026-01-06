@@ -836,10 +836,7 @@ async def main():
         try:
             transport = init_transport(args)
         except ValueError as e:
-            logging.error(
-                color(
-                    f"Error! Transport could not be initialized:\n{e}", "red")
-            )
+            logging.error("Transport could not be initialized: %s", e)
             return
 
         r = None
@@ -875,11 +872,8 @@ async def main():
             # Offer to try alternative transport if using GATT
             if args.transport.lower() == "gatt" and args.target_address:
                 logging.info(
-                    color(
-                        "Tip: Your device may use Bluetooth Classic. "
-                        "Try: --transport rfcomm --target-address %s",
-                        "yellow"
-                    ),
+                    "Tip: Your device may use Bluetooth Classic. "
+                    "Try: --transport rfcomm --target-address %s",
                     args.target_address
                 )
             elif args.transport.lower() == "gatt" and not args.target_address:
@@ -894,10 +888,7 @@ async def _offer_transport_fallback(
 ):
     """Offer to try RFCOMM transport when GATT fails."""
     logging.info(
-        color(
-            "\nWould you like to try Bluetooth Classic (RFCOMM) instead? [y/N]: ",
-            "cyan"
-        )
+        "\nWould you like to try Bluetooth Classic (RFCOMM) instead? [y/N]: "
     )
     response = input().strip().lower()
     if response in ("y", "yes"):
@@ -935,5 +926,36 @@ async def _offer_transport_fallback(
                 await r.close()
 
 
+def run_main():
+    """Run main with proper exception handling."""
+    # Check debug flag early for exception handling display
+    debug_mode = "--debug" in sys.argv
+
+    try:
+        asyncio.run(main())
+    except asyncio.TimeoutError as e:
+        logging.debug("Traceback:", exc_info=True)
+        logging.error(
+            "%s",
+            e if str(
+                e) else "Operation timed out. The device may not support this command."
+        )
+        sys.exit(1)
+    except ConnectionError as e:
+        logging.debug("Traceback:", exc_info=True)
+        logging.error("Connection error: %s", e)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logging.info("Interrupted by user.")
+        sys.exit(130)
+    except (OSError, IOError, RuntimeError, ValueError) as e:
+        # Catch common runtime errors that may bubble up
+        logging.debug("Traceback:", exc_info=True)
+        logging.error("Error: %s", e)
+        if not debug_mode:
+            logging.info("Run with --debug for full traceback.")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_main()
