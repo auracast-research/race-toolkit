@@ -11,15 +11,16 @@ import asyncio
 import argparse
 import subprocess
 import time
+import traceback
 
 from dataclasses import dataclass
 from enum import Enum, auto
 
 try:
-    from usb1 import USBErrorBusy
+    from usb1 import USBErrorBusy  # type: ignore[import-not-found]
 except ImportError:
     # usb1 may not be installed, create a dummy exception
-    class USBErrorBusy(Exception):  # type: ignore
+    class USBErrorBusy(Exception):  # type: ignore[no-redef]
         """Dummy exception when usb1 is not available."""
 
 from hexdump import hexdump
@@ -130,7 +131,8 @@ def parse_args():
         "-d",
         "--device",
         default=None,
-        help="USB device for USBHID transport. Given as VID:PID pair. By default the transport enumerates all devices and lets you choose.",
+        help="USB device for USBHID transport. Given as VID:PID pair. "
+             "By default the transport enumerates all devices and lets you choose.",
     )
     parser.add_argument(
         "--outfile", help="Output file for commands with output (default is stdout)."
@@ -141,7 +143,8 @@ def parse_args():
         "--send-delay",
         type=float,
         default=0.0,
-        help="Introduces a send delay between RACE messages. Might be required for old SDK versions?",
+        help="Introduces a send delay between RACE messages. "
+             "Might be required for old SDK versions?",
     )
     parser.add_argument(
         "--authenticate",
@@ -204,7 +207,8 @@ def parse_args():
     # Mediainfo subcommand
     subparsers.add_parser(
         "mediainfo",
-        help="Dump Current Listening Media Info. This is a proof-of-concept. Only works on some FW versions of Sony WH-CH720N.",
+        help="Dump Current Listening Media Info. This is a proof-of-concept. "
+             "Only works on some FW versions of Sony WH-CH720N.",
     )
 
     # Raw subcommand
@@ -230,13 +234,15 @@ def parse_args():
         "--dont-reflash",
         action="store_true",
         default=False,
-        help="Prevent FOTA partition from being erased and reflashed. This is mainly to retry the currently flashed FOTA update,",
+        help="Prevent FOTA partition from being erased and reflashed. "
+             "This is mainly to retry the currently flashed FOTA update.",
     )
     fota_parser.add_argument(
         "--chunks-per-write",
         type=int,
         default=3,
-        help="How many chunks should be written in one flash write. Experiments show 3 works best. Larger numbers might not be possible.",
+        help="How many chunks should be written in one flash write. "
+             "Experiments show 3 works best. Larger numbers might not be possible.",
     )
 
     return parser.parse_args()
@@ -377,7 +383,18 @@ async def command_check(args: argparse.Namespace):
             "Your device is %s (%s). Trying to identify RACE UUIDs via GATT.",
             dev_name, addr
         )
-        if await le_checker.check_UUIDs(addr):
+        try:
+            uuid_found = await le_checker.check_UUIDs(addr)
+        except asyncio.CancelledError:
+            logging.warning(
+                "BLE connection was cancelled. The device may have disconnected."
+            )
+            uuid_found = False
+        except (OSError, ConnectionError, BrokenPipeError) as e:
+            logging.warning("BLE connection error: %s", e)
+            uuid_found = False
+
+        if uuid_found:
             _get_vuln(vulnerabilities,
                       "CVE-2025-20700").status = VulnerabilityStatus.VULNERABLE
 
@@ -440,6 +457,10 @@ async def command_check(args: argparse.Namespace):
                     logging.warning("Error receiving BD addr: %s.", e)
 
             await le_transport.close()
+            await le_checker.close()
+        else:
+            # uuid_found was False - close the checker and mark as not vulnerable
+            logging.info("No known RACE UUIDs found via GATT.")
             await le_checker.close()
     else:
         logging.info(
@@ -939,20 +960,28 @@ def run_main():
 
     try:
         asyncio.run(main())
-    except asyncio.TimeoutError as e:
-        logging.debug("Traceback:", exc_info=True)
+    except asyncio.CancelledError:
+        # Task was cancelled, usually due to connection issues
+        if debug_mode:
+            logging.debug("Traceback:\n%s", traceback.format_exc())
         logging.error(
-            "%s",
-            e if str(
-                e) else "Operation timed out. The device may not support this command."
+            "Operation was cancelled. The connection may have been lost."
         )
         sys.exit(1)
+    except asyncio.TimeoutError as e:
+        if debug_mode:
+            logging.debug("Traceback:\n%s", traceback.format_exc())
+        msg = str(e) if str(e) else "Operation timed out."
+        logging.error("%s", msg)
+        sys.exit(1)
     except ConnectionError as e:
-        logging.debug("Traceback:", exc_info=True)
+        if debug_mode:
+            logging.debug("Traceback:\n%s", traceback.format_exc())
         logging.error("Connection error: %s", e)
         sys.exit(1)
     except USBErrorBusy:
-        logging.debug("Traceback:", exc_info=True)
+        if debug_mode:
+            logging.debug("Traceback:\n%s", traceback.format_exc())
         logging.error(
             "USB device is busy. The Bluetooth controller may still be in use. "
             "Try unplugging and replugging the adapter, or run: "
@@ -964,11 +993,11 @@ def run_main():
         sys.exit(130)
     except (OSError, IOError, RuntimeError, ValueError) as e:
         # Catch common runtime errors that may bubble up
-        logging.debug("Traceback:", exc_info=True)
+        if debug_mode:
+            logging.debug("Traceback:\n%s", traceback.format_exc())
         logging.error("Error: %s", e)
         if not debug_mode:
             logging.info("Run with --debug for full traceback.")
-        sys.exit(1)
         sys.exit(1)
 
 

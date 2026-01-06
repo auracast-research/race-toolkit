@@ -1,6 +1,12 @@
+"""RACE protocol memory/flash dumper classes.
+
+This module provides classes for dumping RAM and Flash memory from
+devices using the RACE protocol.
+"""
 import asyncio
 import io
 import logging
+from typing import Callable, Optional
 
 from tqdm import tqdm
 from hexdump import hexdump
@@ -18,13 +24,56 @@ from librace.packets import (
 
 
 class RACEDumper:
+    """Base class for RACE protocol memory dumpers.
+
+    Subclasses must set the following attributes:
+        r: RACE instance for communication
+        start: Starting address to dump
+        size: Number of bytes to dump
+        unit_size: Size of each read unit (e.g., 4 for words, 256 for pages)
+        unit: Human-readable unit name (e.g., "word", "page")
+        desc: Description of what's being dumped (e.g., "RAM", "Flash")
+        verb: Action verb (e.g., "Dumping")
+        packet_prep: Callable that creates a packet for a given address
+    """
+
     def __init__(self, progress: bool):
+        """Initialize the dumper.
+
+        Args:
+            progress: Whether to show a progress bar during dump.
+        """
         self.stop_event = asyncio.Event()
         self.outbuf = b""
         self.progress = progress
         self.had_errors = False
+        # These are set by subclasses or in dump()
+        self.r: RACE
+        self.start: int = 0
+        self.size: int = 0
+        self.fd: Optional[io.IOBase] = None
+        self.unit_size: int = 0
+        self.unit: str = ""
+        self.desc: str = ""
+        self.verb: str = ""
+        self.packet_prep: Callable[[int], RacePacket]
 
-    async def dump(self, addr: int = None, size: int = None, fd: io.IOBase = None):
+    async def dump(
+        self,
+        addr: Optional[int] = None,
+        size: Optional[int] = None,
+        fd: Optional[io.IOBase] = None
+    ) -> bytes:
+        """Dump memory from the target device.
+
+        Args:
+            addr: Optional starting address (overrides self.start).
+            size: Optional size to dump (overrides self.size).
+            fd: Optional file descriptor to write data to.
+
+        Returns:
+            The dumped data as bytes.
+        """
         await self.r.setup(self.recv)
 
         if addr is not None and size is not None:
@@ -34,11 +83,13 @@ class RACEDumper:
         self.fd = fd
 
         # Calculate total units for progress bar
-        TOTAL_UNITS = self.size // self.unit_size
+        total_units = self.size // self.unit_size
 
         if self.progress:
             with tqdm(
-                total=TOTAL_UNITS, desc="%s %s" % (self.verb, self.desc), unit=self.unit
+                total=total_units,
+                desc=f"{self.verb} {self.desc}",
+                unit=self.unit
             ) as pbar:
                 address = self.start
                 while address < self.start + self.size:
@@ -48,7 +99,7 @@ class RACEDumper:
                     # Wait for response before proceeding to the next page
                     await self.await_response()
 
-                    # Update progress bar by one UNIT
+                    # Update progress bar by one unit
                     pbar.update(1)
                     address += self.unit_size
             if self.had_errors:
@@ -70,14 +121,16 @@ class RACEDumper:
 
                 address += self.unit_size
 
-        o = self.outbuf
+        result = self.outbuf
         self.outbuf = b""
-        return o
+        return result
 
     async def send(self, race_packet: RacePacket):
+        """Send a RACE packet to the device."""
         await self.r.send(race_packet)
 
     def recv(self, data: bytes):
+        """Handle received data from the device."""
         if not self.progress:
             logging.debug("Received response:")
             logging.debug("\n%s", hexdump(data, 'return'))
@@ -96,13 +149,28 @@ class RACEDumper:
         # Signal main loop to proceed regardless
         self.stop_event.set()
 
+    def _unpack(self, data: bytes) -> Optional[bytes]:
+        """Unpack received data. Must be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _unpack")
+
     async def await_response(self):
+        """Wait for a response from the device."""
         await self.stop_event.wait()
         self.stop_event.clear()
 
 
 class RACERAMDumper(RACEDumper):
+    """Dumper for reading RAM via RACE protocol."""
+
     def __init__(self, r: RACE, start: int, size: int, progress: bool = True):
+        """Initialize RAM dumper.
+
+        Args:
+            r: RACE instance for communication.
+            start: Starting RAM address.
+            size: Number of bytes to dump.
+            progress: Whether to show progress bar.
+        """
         super().__init__(progress)
         self.r = r
         self.start = start
@@ -111,9 +179,10 @@ class RACERAMDumper(RACEDumper):
         self.unit = "word"
         self.desc = "RAM"
         self.verb = "Dumping"
-        self.packet_prep = lambda addr: ReadAddress(addr)
+        self.packet_prep = ReadAddress
 
-    def _unpack(self, data: bytes):
+    def _unpack(self, data: bytes) -> Optional[bytes]:
+        """Unpack RAM read response."""
         race_header = RaceHeader.unpack(data[: RaceHeader.SIZE])
 
         if race_header.id == RaceId.RACE_READ_ADDRESS:
@@ -126,18 +195,28 @@ class RACERAMDumper(RACEDumper):
                 # Return None to indicate read failure - don't return garbage
                 return None
             return packet.page_data
-        else:
-            packet = RacePacket.unpack(data)
-            logging.error(
-                "ERROR got an unexpected packet with ID %#x and payload:",
-                packet.header.id
-            )
-            hexdump(packet.payload)
-            return None
+        # We got some unexpected packet
+        packet = RacePacket.unpack(data)
+        logging.error(
+            "ERROR got an unexpected packet with ID %#x and payload:",
+            packet.header.id
+        )
+        hexdump(packet.payload)
+        return None
 
 
 class RACEFlashDumper(RACEDumper):
+    """Dumper for reading Flash via RACE protocol."""
+
     def __init__(self, r: RACE, start: int, size: int, progress: bool = True):
+        """Initialize Flash dumper.
+
+        Args:
+            r: RACE instance for communication.
+            start: Starting Flash address.
+            size: Number of bytes to dump.
+            progress: Whether to show progress bar.
+        """
         super().__init__(progress)
         self.r = r
         self.start = start
@@ -146,9 +225,14 @@ class RACEFlashDumper(RACEDumper):
         self.unit = "page"
         self.desc = "Flash"
         self.verb = "Dumping"
-        self.packet_prep = lambda addr: ReadFlashPage(addr, storage_type=0)
+        self.packet_prep = self._create_flash_packet
 
-    def _unpack(self, data: bytes):
+    def _create_flash_packet(self, addr: int) -> ReadFlashPage:
+        """Create a ReadFlashPage packet for the given address."""
+        return ReadFlashPage(addr, storage_type=0)
+
+    def _unpack(self, data: bytes) -> Optional[bytes]:
+        """Unpack Flash read response."""
         race_header = RaceHeader.unpack(data[: RaceHeader.SIZE])
 
         if race_header.id == RaceId.RACE_STORAGE_PAGE_READ:
@@ -161,11 +245,11 @@ class RACEFlashDumper(RACEDumper):
                 # Return None to indicate read failure - don't return garbage
                 return None
             return packet.page_data
-        else:  # We got some unexpected packet thats not a ReadFlashPageResponse
-            packet = RacePacket.unpack(data)
-            logging.error(
-                "ERROR got an unexpected packet with ID %#x and payload:",
-                packet.header.id
-            )
-            hexdump(packet.payload)
-            return None
+        # We got some unexpected packet that's not a ReadFlashPageResponse
+        packet = RacePacket.unpack(data)
+        logging.error(
+            "ERROR got an unexpected packet with ID %#x and payload:",
+            packet.header.id
+        )
+        hexdump(packet.payload)
+        return None
