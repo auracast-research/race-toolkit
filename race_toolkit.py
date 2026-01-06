@@ -348,13 +348,12 @@ async def command_check(args: argparse.Namespace):
     # Collected firmware dumps from vulnerability checks
     collected_dumps = {}
 
-    logging.info(color("Starting device check.", "red"))
+    logging.info("Starting device check.")
 
     # Release the Bluetooth controller before starting
     release_bluetooth_controller(args.controller)
 
-    logging.info(
-        color("Step 1: Scanning Bluetooth Low Energy devices.", "cyan"))
+    logging.info("Step 1: Scanning Bluetooth Low Energy devices.")
     logging.info("Scanning for 5 seconds...")
     bdaddr = args.target_address
 
@@ -457,8 +456,7 @@ async def command_check(args: argparse.Namespace):
     # - if we have the address:
     #   - enumerate RFCOMM services and look for known UUIDs
     #   - try to read flash via RFCOMM
-    logging.info(
-        color("Step 2: Checking Bluetooth Classic connection", "cyan"))
+    logging.info("Step 2: Checking Bluetooth Classic connection")
     if not bdaddr:
         logging.error(
             "Now I need a Bluetooth address. If you have it, please supply it now: "
@@ -873,7 +871,7 @@ async def main():
                     r, args.fota_file, args.dont_reflash, args.chunks_per_write
                 )
         except ConnectionError as e:
-            logging.error(color(f"Connection failed: {e}", "red"))
+            logging.error("Connection failed: %s", e)
             # Offer to try alternative transport if using GATT
             if args.transport.lower() == "gatt" and args.target_address:
                 logging.info(

@@ -28,7 +28,7 @@ class ColorFormatter(logging.Formatter):
         "INFO": "green",
         "WARNING": "yellow",
         "ERROR": "red",
-        "CRITICAL": "magenta",
+        "CRITICAL": "red",
     }
 
     def format(self, record: logging.LogRecord):

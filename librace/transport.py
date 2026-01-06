@@ -296,7 +296,7 @@ class GATTBumbleChecker(BumbleTransport):
             logging.info("[X]: None of these devices is mine.")
 
             chosen = -1
-            logging.info(color("Which one of these is yours? ", "cyan"))
+            logging.info("Which one of these is yours? ")
             chosen = input("")
             if chosen.lower() == "x":
                 return False
@@ -658,8 +658,7 @@ class RFCOMMTransport(BumbleTransport):
                 vendor = "Common"
             if vendor != "":
                 logging.info(
-                    color(
-                        f"Found RACE UUID {uuid} for vendor {vendor}", "cyan")
+                    "Found RACE UUID %s for vendor %s", uuid, vendor
                 )
                 return uuid
         return None
