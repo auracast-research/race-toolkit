@@ -21,18 +21,36 @@ def fota_checksum(data: bytes) -> int:
     return (high | (low << 4)) & 0xFF
 
 class ColorFormatter(logging.Formatter):
-    COLORS = {
+    """Custom formatter that adds colors to log messages based on level."""
+    # ANSI color codes for different log levels (bumble color names)
+    LEVEL_COLORS = {
         "DEBUG": "blue",
-        "INFO": "default",
+        "INFO": "cyan",
         "WARNING": "yellow",
         "ERROR": "red",
-        "CRITICAL": "red"
+        "CRITICAL": "magenta",
+    }
+
+    # Prefix symbols for each level
+    LEVEL_PREFIXES = {
+        "DEBUG": "[DBG]",
+        "INFO": "[*]",
+        "WARNING": "[!]",
+        "ERROR": "[X]",
+        "CRITICAL": "[!!!]",
     }
 
     def format(self, record: logging.LogRecord):
-        c = self.COLORS.get(record.levelname)
+        level_color = self.LEVEL_COLORS.get(record.levelname, "default")
+        prefix = self.LEVEL_PREFIXES.get(record.levelname, "")
+        # Format without the default levelname prefix
+        original_format = self._style._fmt
+        self._style._fmt = "%(message)s"
         message = super().format(record)
-        return color(message, c)
+        self._style._fmt = original_format
+        # Color the message and add our prefix
+        colored_msg = color(message, level_color)
+        return f"{color(prefix, level_color)} {colored_msg}"
 
 LOGGING_CONFIG = {
     "version": 1,

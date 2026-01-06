@@ -682,49 +682,75 @@ class RFCOMMTransport(BumbleTransport):
             return
 
         try:
-            # Connect to the remote device
-            self.connection = await self.device.connect(
-                self.address, transport=BT_BR_EDR_TRANSPORT
-            )
-            await self.connection.request_remote_name()
-
-            if self.authenticate:
-                await self.connection.authenticate()
-
-            # a user can supply a UUID
-            if not self.uuid:
-                channels = await find_rfcomm_channels(self.connection)
-                for chn in channels:
-                    uuid = RFCOMMTransport._matches_any_known_uuid(
-                        channels[chn])
-                    if uuid:
-                        self.uuid = uuid
-
-            # If we still have no UUID we have to stop here
-            if not self.uuid:
-                logging.error("Unable to find RACE RFCOMM UUID.")
-                return
-
-            # Find RACE channel based on its UUID
-            channel = await find_rfcomm_channel_with_uuid(
-                self.connection, self.uuid
-            )
-            if channel is None:
-                logging.error("Channel not found.")
-                return
-            logging.info(f"Channel found: {int(channel)}")
-
-            # Establish an RFCOMM session
-            rfcomm_client = RFCOMM_Client(self.connection)
-            rfcomm_mux = await rfcomm_client.start()
-            self.rfcomm_session = await rfcomm_mux.open_dlc(channel)
-            logging.info(f"Connected to {self.address} on channel {channel}")
-
-            self.rfcomm_session.sink = recv_fn
-
+            await self._establish_rfcomm_connection(recv_fn)
+        except BumbleConnectionError as e:
+            # If connection failed without authentication, try with authentication
+            if not self.authenticate:
+                logging.warning(
+                    "Connection failed (%s). Retrying with authentication...", e
+                )
+                self.authenticate = True
+                try:
+                    # Need to reconnect
+                    if self.connection:
+                        try:
+                            await self.connection.disconnect()
+                        except Exception:
+                            pass
+                    await self._establish_rfcomm_connection(recv_fn)
+                except Exception as retry_error:
+                    logging.error(
+                        "Connection failed even with authentication: %s", retry_error
+                    )
+                    logging.debug("Full error details:", exc_info=True)
+            else:
+                logging.error("Connection error: %s", e)
+                logging.debug("Full error details:", exc_info=True)
         except Exception as e:
-            logging.error("Connection error:", e)
+            logging.error("Connection error: %s", e)
+            logging.debug("Full error details:", exc_info=True)
+
+    async def _establish_rfcomm_connection(self, recv_fn: Callable):
+        """Internal method to establish RFCOMM connection."""
+        # Connect to the remote device
+        self.connection = await self.device.connect(
+            self.address, transport=BT_BR_EDR_TRANSPORT
+        )
+        await self.connection.request_remote_name()
+
+        if self.authenticate:
+            await self.connection.authenticate()
+
+        # a user can supply a UUID
+        if not self.uuid:
+            channels = await find_rfcomm_channels(self.connection)
+            for chn in channels:
+                uuid = RFCOMMTransport._matches_any_known_uuid(
+                    channels[chn])
+                if uuid:
+                    self.uuid = uuid
+
+        # If we still have no UUID we have to stop here
+        if not self.uuid:
+            logging.error("Unable to find RACE RFCOMM UUID.")
             return
+
+        # Find RACE channel based on its UUID
+        channel = await find_rfcomm_channel_with_uuid(
+            self.connection, self.uuid
+        )
+        if channel is None:
+            logging.error("Channel not found.")
+            return
+        logging.info("Channel found: %d", int(channel))
+
+        # Establish an RFCOMM session
+        rfcomm_client = RFCOMM_Client(self.connection)
+        rfcomm_mux = await rfcomm_client.start()
+        self.rfcomm_session = await rfcomm_mux.open_dlc(channel)
+        logging.info("Connected to %s on channel %s", self.address, channel)
+
+        self.rfcomm_session.sink = recv_fn
 
     async def send(self, data: bytes):
         if not self.rfcomm_session:
