@@ -714,6 +714,7 @@ class USBHIDTransport(Transport):
         # try to parse USB device if given
         self.vid = None
         self.pid = None
+        self.path = None
         if device_str:
             try:
                 (self.vid, self.pid) = device_str.split(":")
@@ -726,23 +727,29 @@ class USBHIDTransport(Transport):
 
     async def setup(self, recv_fn: Callable):
         if self.device is None:
-            if self.vid is None and self.pid is None:
-                devices = hid.enumerate()
+            devices = hid.enumerate()
+            # filter for only USB HID devices
+            devices = list(
+                filter(lambda x: x["bus_type"] == 1 and x["usage_page"] == 0xff13, devices)
+            )
+            # only one entry per vid/pid pair is required
+            devices = self._filter_unique_vid_pid(devices)
 
-                # filter for only USB HID devices
-                devices = list(
-                    filter(lambda x: x["bus_type"] == 1, devices)
-                )
-                # only one entry per vid/pid pair is required
-                devices = self._filter_unique_vid_pid(devices)
+            if self.vid is None and self.pid is None:
                 device = self._choose_from_list(devices)
 
                 self.vid = device["vendor_id"]
                 self.pid = device["product_id"]
+                self.path = device["path"]
+            elif self.path is None:
+                devices = list(
+                    filter(lambda x: (x["vendor_id"], x["product_id"]) == (self.vid, self.pid), devices)
+                )
+                self.path = devices[0]["path"]
 
             self.device = hid.device()
-            logging.info(f"Opening {self.vid:04x}:{self.pid:04x}.")
-            self.device.open(self.vid, self.pid)
+            logging.info(f"Opening {self.vid:04x}:{self.pid:04x} {self.path}.")
+            self.device.open_path(self.path)
             self.device_name = self.device.get_product_string()
             logging.info(f"Using device {self.device_name} as device.")
 
