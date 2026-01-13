@@ -1,5 +1,5 @@
 bumble==0.0.208
 tqdm
-hid==1.0.7
+hidapi==0.15.0
 bleak
 hexdump

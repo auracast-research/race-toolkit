@@ -731,7 +731,7 @@ class USBHIDTransport(Transport):
 
                 # filter for only USB HID devices
                 devices = list(
-                    filter(lambda x: x["bus_type"] == hid.BusType.USB, devices)
+                    filter(lambda x: x["bus_type"] == 1, devices)
                 )
                 # only one entry per vid/pid pair is required
                 devices = self._filter_unique_vid_pid(devices)
@@ -740,8 +740,10 @@ class USBHIDTransport(Transport):
                 self.vid = device["vendor_id"]
                 self.pid = device["product_id"]
 
-            self.device = hid.Device(self.vid, self.pid)
-            self.device_name = self.device.product
+            self.device = hid.device()
+            logging.info(f"Opening {self.vid:04x}:{self.pid:04x}.")
+            self.device.open(self.vid, self.pid)
+            self.device_name = self.device.get_product_string()
             logging.info(f"Using device {self.device_name} as device.")
 
         self.recv_fn = recv_fn
@@ -774,6 +776,7 @@ class USBHIDTransport(Transport):
         response = self.device.get_input_report(
             USBHIDTransport.RACE_HID_REPORT_ID, USBHIDTransport.REPORT_BUFFER_SIZE
         )
+        response = bytes(response)
         length = struct.unpack("<H", response[1:3])[0]
         return (response, length)
 
