@@ -55,7 +55,7 @@ class RACE:
             if len(self.full_payload) >= RaceHeader.SIZE:
                 data = self.full_payload
 
-            if len(data) > RaceHeader.SIZE:
+            if len(data) >= RaceHeader.SIZE:
                 # First fragment, parse the RaceHeader
                 race_header = RaceHeader.unpack(data[: RaceHeader.SIZE])
                 self.expected_length = race_header.length
