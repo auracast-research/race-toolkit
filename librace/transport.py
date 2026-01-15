@@ -666,9 +666,7 @@ class RFCOMMTransport(BumbleTransport):
                 return
 
             # Find RACE channel based on its UUID
-            channel = await find_rfcomm_channel_with_uuid(
-                self.connection, self.uuid
-            )
+            channel = await find_rfcomm_channel_with_uuid(self.connection, self.uuid)
             if channel is None:
                 logging.error("Channel not found.")
                 return
@@ -730,7 +728,9 @@ class USBHIDTransport(Transport):
             devices = hid.enumerate()
             # filter for only USB HID devices
             devices = list(
-                filter(lambda x: x["bus_type"] == 1 and x["usage_page"] == 0xff13, devices)
+                filter(
+                    lambda x: x["bus_type"] == 1 and x["usage_page"] == 0xFF13, devices
+                )
             )
             # only one entry per vid/pid pair is required
             devices = self._filter_unique_vid_pid(devices)
@@ -743,7 +743,11 @@ class USBHIDTransport(Transport):
                 self.path = device["path"]
             elif self.path is None:
                 devices = list(
-                    filter(lambda x: (x["vendor_id"], x["product_id"]) == (self.vid, self.pid), devices)
+                    filter(
+                        lambda x: (x["vendor_id"], x["product_id"])
+                        == (self.vid, self.pid),
+                        devices,
+                    )
                 )
                 self.path = devices[0]["path"]
 
@@ -820,8 +824,6 @@ class USBHIDTransport(Transport):
                 if 1 <= choice <= len(options):
                     return options[choice - 1]
                 else:
-                    logging.yellow(
-                        f"Please enter a number between 1 and {len(options)}."
-                    )
+                    logging.info(f"Please enter a number between 1 and {len(options)}.")
             except ValueError:
                 logging.error("Invalid input. Please enter a number.")
