@@ -3,7 +3,7 @@ import io
 import logging
 
 from tqdm import tqdm
-from hexdump import hexdump
+from hexdump2 import hexdump
 
 from librace.race import RACE
 from librace.constants import RaceId

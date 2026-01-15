@@ -7,7 +7,7 @@ import argparse
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from hexdump import hexdump
+from hexdump2 import hexdump
 
 from bumble.colors import color
 

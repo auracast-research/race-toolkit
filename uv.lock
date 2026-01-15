@@ -613,10 +613,15 @@ wheels = [
 ]
 
 [[package]]
-name = "hexdump"
-version = "3.3"
+name = "hexdump2"
+version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/55/b3/279b1d57fa3681725d0db8820405cdcb4e62a9239c205e4ceac4391c78e4/hexdump-3.3.zip", hash = "sha256:d781a43b0c16ace3f9366aade73e8ad3a7bd5137d58f0b45ab2d3f54876f20db", size = 12658, upload-time = "2016-01-22T14:40:19.589Z" }
+dependencies = [
+    { name = "colorama" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/37/9d3e37b27b3ef6524c3e1422697cf4c1ba023cb24693047b3ed9fd6d0246/hexdump2-1.2.2-py3-none-any.whl", hash = "sha256:f4db03a2dc6a822a88ae81596466a0d14a13eb6596eff3e05548f3ab84526a73", size = 9354, upload-time = "2022-12-27T17:22:06.141Z" },
+]
 
 [[package]]
 name = "hidapi"
@@ -1172,7 +1177,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "bleak" },
     { name = "bumble" },
-    { name = "hexdump" },
+    { name = "hexdump2" },
     { name = "hidapi" },
     { name = "tqdm" },
 ]
@@ -1186,7 +1191,7 @@ dev = [
 requires-dist = [
     { name = "bleak", specifier = ">=2.0.0" },
     { name = "bumble", specifier = "==0.0.208" },
-    { name = "hexdump", specifier = ">=3.3" },
+    { name = "hexdump2", specifier = ">=1.2.2" },
     { name = "hidapi", specifier = "==0.15.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
