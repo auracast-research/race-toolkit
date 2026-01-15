@@ -34,29 +34,10 @@ class ColorFormatter(logging.Formatter):
         message = super().format(record)
         return color(message, c)
 
-LOGGING_CONFIG = {
-    "version": 1,
-    "formatters": {
-        "colored": {
-            "()": ColorFormatter,
-            "format": "%(levelname)s: %(message)s"
-        }
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "colored",
-            "level": "INFO"
-        }
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO"
-    }
-}
-
 def setup_logging(debug: bool):
-    if debug:
-        LOGGING_CONFIG["handlers"]["console"]["level"] = "DEBUG"
-        LOGGING_CONFIG["root"]["level"] = "DEBUG"
-    logging.config.dictConfig(LOGGING_CONFIG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(ColorFormatter())
+    logging.basicConfig(
+        level="DEBUG" if debug else "INFO",
+        handlers=[handler],
+    )
